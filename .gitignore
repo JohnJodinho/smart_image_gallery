@@ -1,0 +1,9 @@
+.env
+image_search
+__pycache__
+*.pyc
+image_search_db
+image_search_clip_db
+misc
+venv
+data.jsonl

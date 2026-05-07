@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Image Gallery — Vector Search Demo</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root{--accent:#8b5cf6;--accent2:#6d28d9;--bg:#0f172a;--surface:#1e293b;--surface2:#334155;--text:#e2e8f0;--muted:#94a3b8}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;min-height:100vh}
+
+  /* scrollbar */
+  ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:var(--surface2);border-radius:3px}
+
+  /* header glass */
+  header{background:rgba(15,23,42,.85);backdrop-filter:blur(20px);border-bottom:1px solid rgba(139,92,246,.2);position:sticky;top:0;z-index:50}
+
+  /* search glow */
+  #search-input:focus{outline:none;box-shadow:0 0 0 2px var(--accent),0 0 24px rgba(139,92,246,.4)}
+
+  /* category pills */
+  .cat-pill{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:9999px;border:1px solid var(--surface2);background:var(--surface);color:var(--muted);font-size:.8rem;font-weight:500;cursor:pointer;transition:all .2s;white-space:nowrap}
+  .cat-pill:hover{border-color:var(--accent);color:var(--text)}
+  .cat-pill.active{background:var(--accent);border-color:var(--accent);color:#fff;box-shadow:0 0 16px rgba(139,92,246,.5)}
+
+  /* gallery grid */
+  #gallery{columns:2;gap:16px;padding:24px}
+  @media(min-width:640px){#gallery{columns:3}}
+  @media(min-width:1024px){#gallery{columns:4}}
+  @media(min-width:1280px){#gallery{columns:5}}
+
+  .img-card{break-inside:avoid;margin-bottom:16px;border-radius:12px;overflow:hidden;background:var(--surface);border:1px solid rgba(255,255,255,.06);cursor:pointer;position:relative;transition:transform .25s,box-shadow .25s}
+  .img-card:hover{transform:translateY(-4px);box-shadow:0 20px 40px rgba(0,0,0,.5),0 0 0 1px rgba(139,92,246,.3)}
+  .img-card img{width:100%;display:block;transition:opacity .3s}
+  .img-card .overlay{position:absolute;inset:0;background:linear-gradient(to top,rgba(0,0,0,.85) 0%,transparent 50%);opacity:0;transition:opacity .25s;display:flex;align-items:flex-end;padding:12px}
+  .img-card:hover .overlay{opacity:1}
+  .cat-badge{font-size:.7rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;padding:3px 8px;border-radius:4px;background:rgba(139,92,246,.9);color:#fff}
+
+  /* skeleton */
+  .skeleton{background:linear-gradient(90deg,var(--surface) 25%,var(--surface2) 50%,var(--surface) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite;border-radius:12px;margin-bottom:16px;break-inside:avoid}
+  @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+  /* empty state */
+  #empty-state{display:none;flex-direction:column;align-items:center;justify-content:center;padding:80px 24px;gap:16px;text-align:center}
+
+  /* modal */
+  #modal{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.9);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;padding:24px}
+  #modal.open{display:flex}
+  #modal-img{max-width:90vw;max-height:88vh;border-radius:12px;box-shadow:0 40px 80px rgba(0,0,0,.8)}
+  #modal-close{position:absolute;top:20px;right:24px;font-size:2rem;color:var(--muted);cursor:pointer;line-height:1;transition:color .2s}
+  #modal-close:hover{color:#fff}
+
+  /* search spinner */
+  .spin{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* toast */
+  #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--surface2);color:var(--text);padding:10px 20px;border-radius:8px;font-size:.85rem;opacity:0;transition:all .3s;z-index:200;border:1px solid rgba(139,92,246,.4)}
+  #toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+
+  /* topk stepper */
+  .topk-wrap{display:flex;align-items:center;gap:4px;background:var(--surface);border:1px solid var(--surface2);border-radius:12px;padding:2px 6px;user-select:none}
+  .topk-wrap label{font-size:.7rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding-right:2px}
+  .topk-btn{width:24px;height:24px;border:none;border-radius:6px;background:var(--surface2);color:var(--text);font-size:1rem;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s}
+  .topk-btn:hover{background:var(--accent)}
+  .topk-btn:disabled{opacity:.35;cursor:default}
+  #topk-val{font-size:.9rem;font-weight:700;color:var(--text);min-width:26px;text-align:center}
+</style>
+</head>
+<body>
+
+<!-- ═══ HEADER ════════════════════════════════════════════════════════════ -->
+<header>
+  <div class="max-w-screen-2xl mx-auto px-6 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <!-- Brand -->
+    <div class="flex items-center gap-3 flex-wrap">
+      <div class="w-9 h-9 rounded-xl flex items-center justify-center" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9)">
+        <svg width="18" height="18" fill="none" stroke="#fff" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+      </div>
+      <div>
+        <h1 class="text-lg font-bold tracking-tight text-white">VectorGallery</h1>
+        <div class="flex gap-2 mt-1">
+          <button id="open-upload-btn" class="px-2 py-1 rounded text-[10px] font-semibold bg-[var(--surface2)] text-white hover:bg-[var(--accent)] transition-colors border border-white/10">Upload Images</button>
+          <button id="open-img-search-btn" class="px-2 py-1 rounded text-[10px] font-semibold bg-[var(--surface2)] text-white hover:bg-[var(--accent)] transition-colors border border-white/10">Visual Search</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Search + Top-K -->
+    <div class="flex flex-col gap-2 w-full sm:max-w-xl">
+      <div class="flex gap-2">
+        <div class="relative flex-1">
+          <svg class="absolute left-3 top-1/2 -translate-y-1/2 opacity-50" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input id="search-input" type="text" placeholder='e.g. "a red car" or "dog"…'
+            class="w-full pl-9 pr-4 py-2.5 rounded-xl text-sm text-white transition-all"
+            style="background:var(--surface);border:1px solid var(--surface2)"/>
+        </div>
+        <button id="search-btn" class="px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition-all flex items-center gap-2"
+          style="background:linear-gradient(135deg,#8b5cf6,#6d28d9)">
+          <span id="search-btn-label">Search</span>
+          <span id="search-spinner" class="spin hidden"></span>
+        </button>
+        <button id="clear-btn" title="Show all" class="px-3 py-2.5 rounded-xl text-sm transition-all hidden"
+          style="background:var(--surface);border:1px solid var(--surface2);color:var(--muted)">✕</button>
+      </div>
+      <!-- Top-K stepper + hint on the same row -->
+      <div class="flex items-center justify-between gap-3 px-1">
+        <p id="search-hint" class="text-xs" style="color:var(--muted)">Tip: describe what you're looking for — e.g. <span id="hint-example" style="color:var(--accent);font-style:normal">"a red car"</span></p>
+        <div class="topk-wrap" title="Max results to return">
+          <label for="topk-val">Top-K</label>
+          <button id="topk-dec" class="topk-btn" aria-label="Decrease">−</button>
+          <span id="topk-val">12</span>
+          <button id="topk-inc" class="topk-btn" aria-label="Increase">+</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ═══ BODY ══════════════════════════════════════════════════════════════ -->
+<div class="max-w-screen-2xl mx-auto px-6">
+
+  <!-- Status bar -->
+  <div class="flex items-center justify-between py-4 flex-wrap gap-3">
+    <div id="status-text" class="text-sm" style="color:var(--muted)">Loading gallery…</div>
+    <!-- Category pills -->
+    <div id="cat-bar" class="flex flex-wrap gap-2"></div>
+  </div>
+
+  <!-- Gallery -->
+  <div id="gallery"></div>
+
+  <!-- Empty state -->
+  <div id="empty-state">
+    <svg width="80" height="80" fill="none" viewBox="0 0 80 80" style="opacity:.35">
+      <circle cx="40" cy="40" r="38" stroke="#8b5cf6" stroke-width="2"/>
+      <path d="M26 54c2-8 8-14 14-14s12 6 14 14" stroke="#8b5cf6" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="30" cy="34" r="3" fill="#8b5cf6"/>
+      <circle cx="50" cy="34" r="3" fill="#8b5cf6"/>
+    </svg>
+    <h3 class="text-xl font-semibold text-white" id="empty-title">No images found</h3>
+    <p class="text-sm max-w-xs" style="color:var(--muted)" id="empty-sub">
+      No similar images found. Try a different description or keyword.
+    </p>
+    <button id="empty-reset" class="mt-2 px-5 py-2 rounded-full text-sm font-semibold text-white"
+      style="background:var(--accent)">Show all images</button>
+  </div>
+</div>
+
+<!-- ═══ IMAGE MODAL ═══════════════════════════════════════════════════════ -->
+<div id="modal">
+  <span id="modal-close">✕</span>
+  <div class="flex flex-col items-center gap-3">
+    <img id="modal-img" src="" alt=""/>
+    <div id="modal-meta" class="text-sm" style="color:var(--muted)"></div>
+  </div>
+</div>
+
+<!-- ═══ TOAST ═════════════════════════════════════════════════════════════ -->
+<div id="toast"></div>
+
+<!-- ═══ UPLOAD MODAL ═══════════════════════════════════════════════════════ -->
+<div id="upload-modal" class="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm hidden items-center justify-center p-6">
+  <div class="bg-[var(--surface)] p-6 rounded-xl w-full max-w-md border border-white/10 relative">
+    <button id="upload-close" class="absolute top-4 right-4 text-[var(--muted)] hover:text-white">✕</button>
+    <h2 class="text-xl font-bold text-white mb-4">Upload Images</h2>
+    <form id="upload-form" class="flex flex-col gap-4">
+      <div>
+        <label class="block text-sm text-[var(--muted)] mb-1">Select Images</label>
+        <input type="file" id="upload-files" multiple accept="image/*" class="w-full text-sm text-[var(--muted)] file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-[var(--accent)] file:text-white hover:file:bg-[var(--accent2)] cursor-pointer" required/>
+      </div>
+      <div>
+        <label class="block text-sm text-[var(--muted)] mb-1">Category</label>
+        <div class="flex gap-2">
+          <select id="upload-category-select" class="flex-1 bg-[var(--surface2)] text-white text-sm rounded-lg p-2 border border-white/10 focus:border-[var(--accent)] outline-none">
+            <option value="">-- Select --</option>
+          </select>
+          <input type="text" id="upload-category-new" placeholder="Or new..." class="flex-1 bg-[var(--surface2)] text-white text-sm rounded-lg p-2 border border-white/10 focus:border-[var(--accent)] outline-none"/>
+        </div>
+      </div>
+      <button type="submit" id="upload-submit-btn" class="mt-2 py-2 rounded-lg text-sm font-semibold text-white bg-gradient-to-r from-[var(--accent)] to-[var(--accent2)] flex items-center justify-center gap-2">
+        <span id="upload-btn-label">Upload to Database</span>
+        <span id="upload-spinner" class="spin hidden"></span>
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- ═══ IMAGE SEARCH MODAL ═════════════════════════════════════════════════ -->
+<div id="img-search-modal" class="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm hidden items-center justify-center p-6">
+  <div class="bg-[var(--surface)] p-6 rounded-xl w-full max-w-md border border-white/10 relative">
+    <button id="img-search-close" class="absolute top-4 right-4 text-[var(--muted)] hover:text-white">✕</button>
+    <h2 class="text-xl font-bold text-white mb-4">Image-to-Image Search</h2>
+    <form id="img-search-form" class="flex flex-col gap-4">
+      <div>
+        <label class="block text-sm text-[var(--muted)] mb-1">Select an Image</label>
+        <input type="file" id="img-search-file" accept="image/*" class="w-full text-sm text-[var(--muted)] file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-[var(--accent)] file:text-white hover:file:bg-[var(--accent2)] cursor-pointer" required/>
+      </div>
+      <button type="submit" id="img-search-submit-btn" class="mt-2 py-2 rounded-lg text-sm font-semibold text-white bg-gradient-to-r from-[var(--accent)] to-[var(--accent2)] flex items-center justify-center gap-2">
+        <span id="img-search-btn-label">Find Similar Images</span>
+        <span id="img-search-spinner" class="spin hidden"></span>
+      </button>
+    </form>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+const state = {
+  allImages: [],      // full gallery from /api/images
+  displayed: [],      // currently rendered images
+  activeCategory: null,
+  activeQuery: null,
+  categories: [],
+};
+
+// ── DOM refs ───────────────────────────────────────────────────────────────
+const gallery    = document.getElementById('gallery');
+const emptyState = document.getElementById('empty-state');
+const statusText = document.getElementById('status-text');
+const catBar     = document.getElementById('cat-bar');
+const searchInput= document.getElementById('search-input');
+const searchBtn  = document.getElementById('search-btn');
+const searchLabel= document.getElementById('search-btn-label');
+const spinner    = document.getElementById('search-spinner');
+const clearBtn   = document.getElementById('clear-btn');
+const modal      = document.getElementById('modal');
+const modalImg   = document.getElementById('modal-img');
+const modalMeta  = document.getElementById('modal-meta');
+const emptyReset = document.getElementById('empty-reset');
+const toast      = document.getElementById('toast');
+
+const uploadModal = document.getElementById('upload-modal');
+const uploadForm = document.getElementById('upload-form');
+const uploadCatSelect = document.getElementById('upload-category-select');
+const uploadCatNew = document.getElementById('upload-category-new');
+const uploadSpinner = document.getElementById('upload-spinner');
+const uploadBtnLabel = document.getElementById('upload-btn-label');
+const uploadSubmitBtn = document.getElementById('upload-submit-btn');
+
+const imgSearchModal = document.getElementById('img-search-modal');
+const imgSearchForm = document.getElementById('img-search-form');
+const imgSearchSpinner = document.getElementById('img-search-spinner');
+const imgSearchBtnLabel = document.getElementById('img-search-btn-label');
+const imgSearchSubmitBtn = document.getElementById('img-search-submit-btn');
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+function showToast(msg, ms=2500){
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(()=>toast.classList.remove('show'), ms);
+}
+
+// ── Skeletons ──────────────────────────────────────────────────────────────
+function showSkeletons(n=12){
+  gallery.innerHTML = '';
+  emptyState.style.display='none';
+  const heights=[180,240,160,220,200,170,250,190,210,160,230,200];
+  for(let i=0;i<n;i++){
+    const d=document.createElement('div');
+    d.className='skeleton';
+    d.style.height=(heights[i%heights.length])+'px';
+    gallery.appendChild(d);
+  }
+}
+
+// ── Render images ──────────────────────────────────────────────────────────
+function renderImages(images){
+  gallery.innerHTML='';
+  emptyState.style.display='none';
+
+  if(!images.length){
+    emptyState.style.display='flex';
+    return;
+  }
+
+  images.forEach(img=>{
+    const card = document.createElement('div');
+    card.className='img-card';
+    card.innerHTML=`
+      <img src="${img.image_encoding}" alt="${img.id}" loading="lazy"
+           onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22150%22><rect fill=%22%231e293b%22 width=%22200%22 height=%22150%22/><text x=%2250%%22 y=%2250%%22 fill=%22%2364748b%22 text-anchor=%22middle%22 dominant-baseline=%22middle%22 font-size=%2212%22>No image</text></svg>'"/>
+      <div class="overlay">
+        ${img.category?`<span class="cat-badge">${img.category}</span>`:''}
+      </div>`;
+    card.addEventListener('click',()=>openModal(img));
+    gallery.appendChild(card);
+  });
+
+  statusText.textContent = `${images.length} image${images.length!==1?'s':''} shown`;
+}
+
+// ── Modal ──────────────────────────────────────────────────────────────────
+function openModal(img){
+  modalImg.src = img.image_encoding;
+  modalMeta.textContent = img.id + (img.category ? ` · ${img.category}` : '');
+  modal.classList.add('open');
+}
+function closeModal(){
+  modal.classList.remove('open');
+  modalImg.src='';
+}
+modal.addEventListener('click', e=>{ if(e.target===modal) closeModal(); });
+document.getElementById('modal-close').addEventListener('click', closeModal);
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeModal(); });
+
+// ── Category pills ─────────────────────────────────────────────────────────
+function buildCategoryBar(categories){
+  catBar.innerHTML='';
+  const all = document.createElement('button');
+  all.className='cat-pill active';
+  all.dataset.cat='';
+  all.innerHTML=`<span>🗂</span> All`;
+  all.addEventListener('click',()=>selectCategory('',all));
+  catBar.appendChild(all);
+
+  const icons={animal:'🐾',car:'🚗',food:'🍽',person:'👤',weapon:'🔫',boat:'⛵',furniture:'🪑',structure:'🏛','military-vehicle':'🪖'};
+  categories.forEach(cat=>{
+    const btn=document.createElement('button');
+    btn.className='cat-pill';
+    btn.dataset.cat=cat;
+    const icon=icons[cat]||'🏷';
+    btn.innerHTML=`<span>${icon}</span> ${cat.charAt(0).toUpperCase()+cat.slice(1)}`;
+    btn.addEventListener('click',()=>selectCategory(cat,btn));
+    catBar.appendChild(btn);
+  });
+}
+
+function selectCategory(cat, el){
+  document.querySelectorAll('.cat-pill').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  state.activeCategory = cat||null;
+
+  // If a search query is active, re-run it with the new category filter
+  if(state.activeQuery){
+    runSearch(state.activeQuery);
+  } else {
+    applyLocalCategoryFilter();
+  }
+}
+
+function applyLocalCategoryFilter(){
+  if(!state.activeCategory){
+    renderImages(state.allImages);
+    return;
+  }
+  const filtered = state.allImages.filter(
+    i=>(i.category||'').toLowerCase()===state.activeCategory.toLowerCase()
+  );
+  renderImages(filtered);
+  statusText.textContent = `${filtered.length} image${filtered.length!==1?'s':''} in "${state.activeCategory}"`;
+}
+
+// ── Fetch all images ───────────────────────────────────────────────────────
+async function loadGallery(){
+  showSkeletons();
+  try{
+    // Also fetch health to populate category bar
+    const [imagesRes, healthRes] = await Promise.all([
+      fetch('/api/images'),
+      fetch('/api/health'),
+    ]);
+    if(!imagesRes.ok) throw new Error('Failed to load images');
+    const imagesData = await imagesRes.json();
+    const healthData = healthRes.ok ? await healthRes.json() : {categories:[]};
+
+    state.allImages = imagesData.images || [];
+    state.categories = healthData.categories || [];
+
+    buildCategoryBar(state.categories);
+    renderImages(state.allImages);
+    statusText.textContent = `${state.allImages.length} images loaded`;
+  }catch(err){
+    gallery.innerHTML='';
+    statusText.textContent='⚠ Failed to connect to the API.';
+    showToast('Could not load gallery. Is the server running?', 4000);
+    console.error(err);
+  }
+}
+
+// ── Top-K stepper ──────────────────────────────────────────────────────────
+const TOPK_MIN = 1, TOPK_MAX = 50;
+let topkValue = 12;
+
+const topkValEl = document.getElementById('topk-val');
+const topkDec   = document.getElementById('topk-dec');
+const topkInc   = document.getElementById('topk-inc');
+
+function setTopK(n){
+  topkValue = Math.min(TOPK_MAX, Math.max(TOPK_MIN, n));
+  topkValEl.textContent = topkValue;
+  topkDec.disabled = topkValue <= TOPK_MIN;
+  topkInc.disabled = topkValue >= TOPK_MAX;
+}
+setTopK(12); // initialise
+topkDec.addEventListener('click', () => setTopK(topkValue - 1));
+topkInc.addEventListener('click', () => setTopK(topkValue + 1));
+
+// ── Search ─────────────────────────────────────────────────────────────────
+async function runSearch(q){
+  if(!q.trim()) return;
+  state.activeQuery = q;
+
+  // UI: loading state
+  searchLabel.textContent='Searching';
+  spinner.classList.remove('hidden');
+  searchBtn.disabled=true;
+  clearBtn.classList.remove('hidden');
+  showSkeletons(topkValue);
+  statusText.textContent = `Searching for "${q}"…`;
+
+  const params = new URLSearchParams({q, topk: topkValue});
+  if(state.activeCategory) params.set('category', state.activeCategory);
+
+  try{
+    const res = await fetch(`/api/search?${params}`);
+    if(!res.ok) throw new Error(`API error ${res.status}`);
+    const data = await res.json();
+    const images = data.images || [];
+
+    if(!images.length){
+      gallery.innerHTML='';
+      emptyState.style.display='flex';
+      document.getElementById('empty-title').textContent = `No similar images for "${q}"`;
+      document.getElementById('empty-sub').textContent =
+        'Try adjusting your search terms or checking another category.';
+      statusText.textContent = `No results for "${q}"`;
+    } else {
+      renderImages(images);
+      statusText.textContent = `${data.total} result${data.total!==1?'s':''} for "${q}"`;
+      showToast(`✓ Found ${data.total} image${data.total!==1?'s':''}`, 2000);
+    }
+  }catch(err){
+    gallery.innerHTML='';
+    statusText.textContent='⚠ Search failed.';
+    showToast('Search request failed. Check the console.', 4000);
+    console.error(err);
+  }finally{
+    searchLabel.textContent='Search';
+    spinner.classList.add('hidden');
+    searchBtn.disabled=false;
+  }
+}
+
+// ── Clear search ───────────────────────────────────────────────────────────
+function clearSearch(){
+  state.activeQuery = null;
+  searchInput.value = '';
+  clearBtn.classList.add('hidden');
+  // Reset category to "All"
+  document.querySelectorAll('.cat-pill').forEach(b=>b.classList.remove('active'));
+  catBar.querySelector('[data-cat=""]')?.classList.add('active');
+  state.activeCategory = null;
+  renderImages(state.allImages);
+  statusText.textContent = `${state.allImages.length} images loaded`;
+}
+
+// ── Event listeners ────────────────────────────────────────────────────────
+searchBtn.addEventListener('click',()=>runSearch(searchInput.value.trim()));
+searchInput.addEventListener('keydown', e=>{ if(e.key==='Enter') runSearch(searchInput.value.trim()); });
+clearBtn.addEventListener('click', clearSearch);
+emptyReset.addEventListener('click', clearSearch);
+
+// Clear to browse mode when the input is emptied
+searchInput.addEventListener('input',()=>{
+  if(!searchInput.value.trim()) clearSearch();
+});
+
+document.getElementById('open-upload-btn').addEventListener('click', () => {
+  uploadCatSelect.innerHTML = '<option value="">-- Select --</option>' + state.categories.map(c => `<option value="${c}">${c}</option>`).join('');
+  uploadModal.style.display = 'flex';
+});
+document.getElementById('upload-close').addEventListener('click', () => uploadModal.style.display = 'none');
+
+document.getElementById('open-img-search-btn').addEventListener('click', () => imgSearchModal.style.display = 'flex');
+document.getElementById('img-search-close').addEventListener('click', () => imgSearchModal.style.display = 'none');
+
+uploadForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const files = document.getElementById('upload-files').files;
+  if (!files.length) return alert('Please select files.');
+  const cat = uploadCatNew.value.trim() || uploadCatSelect.value;
+  if (!cat) return alert('Please select or enter a category.');
+
+  const formData = new FormData();
+  for (let f of files) formData.append('files', f);
+  formData.append('category', cat);
+
+  uploadSubmitBtn.disabled = true;
+  uploadSpinner.classList.remove('hidden');
+  uploadBtnLabel.textContent = 'Uploading...';
+
+  try {
+    const res = await fetch('/api/images/upload', { method: 'POST', body: formData });
+    if (!res.ok) throw new Error('Upload failed');
+    showToast(`Successfully uploaded ${files.length} images!`);
+    uploadModal.style.display = 'none';
+    uploadForm.reset();
+    await loadGallery(); // refresh
+  } catch (err) {
+    alert('Upload error: ' + err.message);
+  } finally {
+    uploadSubmitBtn.disabled = false;
+    uploadSpinner.classList.add('hidden');
+    uploadBtnLabel.textContent = 'Upload to Database';
+  }
+});
+
+imgSearchForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const file = document.getElementById('img-search-file').files[0];
+  if (!file) return alert('Please select an image.');
+
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('topk', topkValue);
+
+  imgSearchSubmitBtn.disabled = true;
+  imgSearchSpinner.classList.remove('hidden');
+  imgSearchBtnLabel.textContent = 'Searching...';
+
+  try {
+    showSkeletons(topkValue);
+    imgSearchModal.style.display = 'none';
+    statusText.textContent = `Visual search in progress...`;
+    
+    const res = await fetch('/api/search/image', { method: 'POST', body: formData });
+    if (!res.ok) throw new Error('Search failed');
+    const data = await res.json();
+    
+    const images = data.images || [];
+    if (!images.length) {
+      gallery.innerHTML = '';
+      emptyState.style.display = 'flex';
+      document.getElementById('empty-title').textContent = `No similar images`;
+      document.getElementById('empty-sub').textContent = 'Could not find anything visually similar.';
+      statusText.textContent = `No results found`;
+    } else {
+      renderImages(images);
+      statusText.textContent = `${data.total} visual match${data.total!==1?'es':''}`;
+      showToast(`✓ Found ${data.total} image${data.total!==1?'s':''}`);
+    }
+  } catch (err) {
+    alert('Search error: ' + err.message);
+    clearSearch();
+  } finally {
+    imgSearchSubmitBtn.disabled = false;
+    imgSearchSpinner.classList.add('hidden');
+    imgSearchBtnLabel.textContent = 'Find Similar Images';
+    imgSearchForm.reset();
+  }
+});
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+loadGallery();
+</script>
+</body>
+</html>
