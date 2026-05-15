@@ -1,36 +1,30 @@
-"""
-embedder.py
-=========================
-Singleton module to ensure the CLIP model is loaded into memory exactly once.
-"""
 
 import os
 
 os.environ["HF_HUB_OFFLINE"] = "1"
 
-from sentence_transformers import SentenceTransformer
 import logging
+from sentence_transformers import SentenceTransformer
 
-# Configure basic logging to track when the model actually loads
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-# Private global variable to hold the model instance
 _model_instance = None
 
 
 def get_model():
     """
     Returns the loaded CLIP model.
-    If it is not loaded yet, it initializes it.
+    Initializes it if not already loaded.
     """
     global _model_instance
 
     if _model_instance is None:
         logger.info("Initializing CLIP model (clip-ViT-B-32)...")
         logger.info("This should only happen ONCE per process.")
-        # Load the model (downloads on first run, loads from cache subsequently)
+
         _model_instance = SentenceTransformer("clip-ViT-B-32")
+
         logger.info("CLIP Model loaded successfully into memory.")
 
     return _model_instance

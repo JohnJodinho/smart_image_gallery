@@ -5,6 +5,7 @@ Thin route layer: validate inputs → call service → return response.
 Zero business logic lives here.
 """
 
+
 import logging
 import re
 import uuid
@@ -47,7 +48,8 @@ async def health(request: Request):
 @router.get("/images", response_model=GalleryResponse, summary="List all images")
 async def get_images(
     request: Request,
-    category: Optional[str] = Query(None, description="Filter by category (case-insensitive)"),
+    category: Optional[str] = Query(
+        None, description="Filter by category (case-insensitive)"),
 ):
     """Return all images, optionally filtered by category."""
     svc = _svc(request)
@@ -64,7 +66,8 @@ async def get_images(
         return GalleryResponse(images=items, total=len(items))
     except Exception as exc:
         logger.error("GET /api/images error: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to retrieve images.")
+        raise HTTPException(
+            status_code=500, detail="Failed to retrieve images.")
 
 
 # ---------------------------------------------------------------------------
@@ -74,14 +77,17 @@ async def get_images(
 @router.get("/search", response_model=GalleryResponse, summary="Semantic image search (CLIP)")
 async def search_images(
     request: Request,
-    q: str = Query(..., min_length=1, description="Free-text query — embedded live with CLIP"),
-    topk: int = Query(default=12, ge=1, le=50, description="Maximum number of images to return"),
-    category: Optional[str] = Query(None, description="Optional category filter"),
+    q: str = Query(..., min_length=1,
+                   description="Free-text query — embedded live with CLIP"),
+    topk: int = Query(default=12, ge=1, le=50,
+                      description="Maximum number of images to return"),
+    category: Optional[str] = Query(
+        None, description="Optional category filter"),
 ):
     """
     Embed `q` dynamically with the local clip-ViT-B-32 model and return
     the `topk` most semantically similar images from the zvec collection.
-    Any free-text concept is supported — no predefined query list required.
+    
     """
     svc = _svc(request)
     try:
@@ -117,8 +123,9 @@ async def upload_images(
             # Clean filename to pass zvec ID regex validation
             safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', f.filename or "upload")
             unique_id = f"{safe_name}_{uuid.uuid4().hex[:8]}"
-            images_data.append({"id": unique_id, "category": category, "file": f})
-            
+            images_data.append(
+                {"id": unique_id, "category": category, "file": f})
+
         processed_images = await process_bulk_images(images_data)
         svc.add_images(processed_images)
         return {"message": "Images added successfully", "count": len(processed_images)}
@@ -139,15 +146,17 @@ async def search_by_image(
 ):
     svc = _svc(request)
     try:
-        image_data = [{"id": "search_query", "category": "query", "file": file}]
+        image_data = [{"id": "search_query",
+                       "category": "query", "file": file}]
         processed_images = await process_bulk_images(image_data)
-        
+
         if not processed_images:
-            raise HTTPException(status_code=400, detail="Failed to process image.")
-            
+            raise HTTPException(
+                status_code=400, detail="Failed to process image.")
+
         embedding = processed_images[0]["embedding"]
         raw = svc.search_by_vector(embedding=embedding, topk=topk)
-        
+
         items = [
             ImageItem(
                 id=img.get("id", ""),

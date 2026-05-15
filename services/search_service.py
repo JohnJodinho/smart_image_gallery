@@ -9,6 +9,7 @@ same CLIP model, then queried against the zvec collection.
 No predefined query list or exact-match dictionary is required.
 """
 
+
 import json
 import logging
 import os
@@ -28,6 +29,7 @@ class SearchService:
         self._images: List[Dict[str, Any]] = []
         self._categories: List[str] = []
         self.collection = None
+        self._data_path: str = ""
 
     # -----------------------------------------------------------------------
     # Startup: data loading + CLIP embedding
@@ -43,6 +45,7 @@ class SearchService:
         longer used; text query pre-computation has been removed in favour
         of live dynamic embedding in search().
         """
+        self._data_path = data_path
 
         # 1. Initialise zvec collection (512-dim, clip-ViT-B-32)
         # ── Changed from ./image_search_auth_db so zvec creates a fresh DB
@@ -52,12 +55,14 @@ class SearchService:
         image_field = zvec.FieldSchema(
             name="base64_image", data_type=zvec.DataType.STRING
         )
-        cat_field = zvec.FieldSchema(name="category", data_type=zvec.DataType.STRING)
+        cat_field = zvec.FieldSchema(
+            name="category", data_type=zvec.DataType.STRING)
         embedding_field = zvec.VectorSchema(
             name="embedding",
             data_type=zvec.DataType.VECTOR_FP32,
             dimension=512,  # clip-ViT-B-32 outputs exactly 512 dims
-            index_param=zvec.HnswIndexParam(metric_type=zvec.MetricType.COSINE),
+            index_param=zvec.HnswIndexParam(
+                metric_type=zvec.MetricType.COSINE),
         )
         schema = zvec.CollectionSchema(
             name="gallery",
@@ -70,19 +75,13 @@ class SearchService:
         else:
             self.collection = zvec.create_and_open(path=db_path, schema=schema)
 
-        # 2. Load images into memory & batch-encode for zvec when DB is empty
+        # 2. Load images into memory
         p_data = Path(data_path)
         if not p_data.exists():
             logger.error(
                 "data.jsonl not found at '%s'. Image store is empty.", data_path
             )
             return
-
-        zvec_stats = json.loads(str(self.collection.stats))
-        needs_insert = zvec_stats.get("doc_count", 0) == 0
-
-        # Collect Base64Image dicts for batch CLIP processing (only when needed).
-        images_to_embed: List[Base64Image] = []
 
         with p_data.open("r", encoding="utf-8") as fh:
             for line in fh:
@@ -103,39 +102,52 @@ class SearchService:
                 # Always build in-memory list for the default gallery view
                 self._images.append(record)
 
-                # Package for batch CLIP encoding only when the DB is empty
-                if needs_insert:
-                    images_to_embed.append(
-                        Base64Image(
-                            id=record["id"],
-                            category=cat,
-                            base64_image=enc,
-                        )
+        # 3. Auto-Healing Sync Check
+        zvec_stats = json.loads(str(self.collection.stats))
+        doc_count = zvec_stats.get("doc_count", 0)
+
+        if doc_count == len(self._images):
+            logger.info("Database perfectly synchronized (Zvec: %d, JSONL: %d). Skipping embedding phase.", doc_count, len(self._images))
+        else:
+            logger.warning("Desync detected: JSONL has %d, Zvec has %d. Rebuilding index...", len(self._images), doc_count)
+            
+            if doc_count > 0:
+                self.collection.destroy()
+                self.collection = zvec.create_and_open(path=db_path, schema=schema)
+                
+            images_to_embed: List[Base64Image] = []
+            for record in self._images:
+                images_to_embed.append(
+                    Base64Image(
+                        id=record["id"],
+                        category=record.get("category", ""),
+                        base64_image=record["image_encoding"],
                     )
-
-        # Batch-encode with CLIP → insert into zvec → build HNSW index
-        if needs_insert and images_to_embed:
-            logger.info(
-                "Batch-encoding %d images with clip-ViT-B-32 (512-dim)…",
-                len(images_to_embed),
-            )
-            # process_bulk_images reads each image once, encodes in one
-            # forward pass, and returns {id, base64_image, embedding, category}
-            processed = await process_bulk_images(images_to_embed)
-
-            for item in processed:
-                doc = zvec.Doc(
-                    id=item["id"],
-                    fields={
-                        "base64_image": item["base64_image"],
-                        "category": item["category"],
-                    },
-                    vectors={"embedding": item["embedding"]},  # 512-dim CLIP vector
                 )
-                self.collection.insert(doc)
 
-            self.collection.optimize()
-            logger.info("Inserted and indexed %d documents into zvec.", len(processed))
+            # Batch-encode with CLIP → insert into zvec → build HNSW index
+            if images_to_embed:
+                logger.info(
+                    "Batch-encoding %d images with clip-ViT-B-32 (512-dim)…",
+                    len(images_to_embed),
+                )
+                processed = await process_bulk_images(images_to_embed)
+
+                for item in processed:
+                    doc = zvec.Doc(
+                        id=item["id"],
+                        fields={
+                            "base64_image": item["base64_image"],
+                            "category": item["category"],
+                        },
+                        # 512-dim CLIP vector
+                        vectors={"embedding": item["embedding"]},
+                    )
+                    self.collection.insert(doc)
+
+                self.collection.optimize()
+                logger.info(
+                    "Inserted and indexed %d documents into zvec.", len(processed))
 
         logger.info(
             "SearchService ready: %d images | categories: %s",
@@ -160,7 +172,9 @@ class SearchService:
     # -----------------------------------------------------------------------
 
     def add_images(self, processed_images: List[ProcessedImage]) -> None:
-        """Adds new images to the zvec collection and memory."""
+        """Adds new images to the zvec collection, memory, and persists to disk."""
+        records_to_save = []
+        
         for item in processed_images:
             doc = zvec.Doc(
                 id=item["id"],
@@ -178,10 +192,17 @@ class SearchService:
                 "category": item["category"],
             }
             self._images.append(record)
+            records_to_save.append(record)
 
             if item["category"] and item["category"] not in self._categories:
                 self._categories.append(item["category"])
                 self._categories.sort()
+
+        if self._data_path and records_to_save:
+            with open(self._data_path, "a", encoding="utf-8") as f:
+                for rec in records_to_save:
+                    f.write(json.dumps(rec) + "\n")
+            logger.info(f"Persisted {len(records_to_save)} new images to {self._data_path}")
 
     def search_by_vector(
         self, embedding: List[float], topk: int = 12

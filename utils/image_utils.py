@@ -15,6 +15,7 @@ Matches the field names used in services/search_service.py's zvec schema:
     vectors → embedding
 """
 
+
 import base64
 import io
 from typing import Any, Dict, List, Union
@@ -154,7 +155,8 @@ async def process_bulk_images(
             pil_img = pil_img.convert("RGB")
 
         pil_images.append(pil_img)
-        metadata.append({"id": item_id, "base64_image": data_uri, "category": category})
+        metadata.append(
+            {"id": item_id, "base64_image": data_uri, "category": category})
 
     # ── Batch encode all images in one forward pass ─────────────────────────
     model = get_model()
