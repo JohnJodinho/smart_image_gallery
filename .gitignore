@@ -16,3 +16,5 @@ venv
 !/storage/seed_images/.gitkeep
 /storage/processed_images/*
 !/storage/processed_images/.gitkeep
+data.
+*.jsonl
