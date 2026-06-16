@@ -23,6 +23,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.routers import gallery
+from core.config import settings
 from services.search_service import SearchService
 
 # ---------------------------------------------------------------------------
@@ -49,7 +50,7 @@ _search_service = SearchService()
 async def lifespan(app: FastAPI):
     logger.info("  Image Gallery API starting …")
     await _search_service.load_data(
-        data_path="./data.jsonl",
+        data_path=settings.DATA_PATH,
         # queries_path removed — live CLIP embedding replaces text query lookup
     )
     app.state.search_service = _search_service
@@ -65,9 +66,9 @@ async def lifespan(app: FastAPI):
 # ---------------------------------------------------------------------------
 
 app = FastAPI(
-    title="Image Gallery API",
-    description="Text-to-image search powered by live CLIP embeddings + zvec.",
-    version="1.0.0",
+    title=settings.PROJECT_NAME,
+    description="Text-to-image and image-to-image semantic search powered by embeddings.",
+    version=settings.VERSION,
     lifespan=lifespan,
 )
 
@@ -77,9 +78,9 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict to your domain in production
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -91,7 +92,8 @@ app.add_middleware(
 @app.exception_handler(Exception)
 async def _global_exc_handler(request: Request, exc: Exception):
     logger.error(
-        "Unhandled %s on %s %s", type(exc).__name__, request.method, request.url
+        "Unhandled %s on %s %s", type(
+            exc).__name__, request.method, request.url
     )
     return JSONResponse(
         status_code=500,

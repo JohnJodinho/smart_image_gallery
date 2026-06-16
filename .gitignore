@@ -1,9 +1,18 @@
 .env
 image_search
+zvec_db_*/
+.env.local
 __pycache__
 *.pyc
 image_search_db
 image_search_clip_db
-misc
 venv
-data.jsonl
+# Storage directory (ignore all contents by default)
+/storage/*
+!/storage/.gitkeep
+!/storage/seed_images/
+!/storage/processed_images/
+/storage/seed_images/*
+!/storage/seed_images/.gitkeep
+/storage/processed_images/*
+!/storage/processed_images/.gitkeep

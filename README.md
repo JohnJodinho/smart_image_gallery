@@ -55,6 +55,31 @@ Then navigate to `http://127.0.0.1:8000`.
 
 > **Note:** the first execution will download the CLIP model weights for `clip-ViT-B-32` (approximately 398MB). After the initial download, `HF_HUB_OFFLINE=1` ensures the model is reused from cache and future starts are offline.
 
+## Data Storage & Bootstrapping
+
+The application uses a single `./storage/` directory to hold all persistent state. This design avoids mounting individual files into Docker (which can cause Docker to create empty files or directories unexpectedly).
+
+Important: Do NOT mount `./storage/data.jsonl` directly as a file into the container. Always mount the whole `./storage` directory. Example `docker-compose` already maps `./storage:/app/storage`.
+
+On first run the app will automatically create the storage layout:
+
+- `./storage/data.jsonl` — primary JSONL document store (source of truth)
+- `./storage/vector_db_*d` — zvec vector index folders (namespaced by vector dimension)
+- `./storage/seed_images/` — hot-folder for raw image ingestion
+- `./storage/processed_images/` — archive for images already ingested
+
+Bootstrapping options:
+
+- **The Blank Slate:** A fresh clone begins empty. The app creates `./storage/` and necessary subfolders on startup.
+
+- **Option A — API & UI Uploads:** Start the app and use the frontend to drag-and-drop files, or call the `/api/images/upload` endpoint with multipart uploads. The server will batch-embed and persist the images.
+
+- **Option B — The "Hot Folder" (Raw Images):** Drop `.jpg`, `.jpeg`, or `.png` files into `./storage/seed_images/` before starting the server (or while restarting). On startup the backend will batch-process all files, append records to `data.jsonl`, insert vectors into zvec, and move originals to `./storage/processed_images/` to avoid re-processing.
+
+- **Option C — Preconfigured Dataset:** If you already have a `data.jsonl` file, place it at `./storage/data.jsonl`. On startup the app will detect it and rebuild the vector index from the JSONL records if needed.
+
+These ingestion paths are additive and interoperable: you can seed with raw files, later augment via API uploads, or restore from a `data.jsonl` export.
+
 ## API Reference
 
 | Endpoint             | Method | Purpose                                       |

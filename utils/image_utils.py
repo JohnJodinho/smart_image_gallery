@@ -24,7 +24,7 @@ from fastapi import UploadFile
 from PIL import Image
 from typing import TypedDict
 
-from utils.embedder import get_model
+from utils.embedders.factory import get_embedder
 
 
 # ---------------------------------------------------------------------------
@@ -159,8 +159,15 @@ async def process_bulk_images(
             {"id": item_id, "base64_image": data_uri, "category": category})
 
     # ── Batch encode all images in one forward pass ─────────────────────────
-    model = get_model()
-    embeddings: List[List[float]] = model.encode(pil_images).tolist()
+    embedder = get_embedder()
+    embedding_result = embedder.encode(pil_images)
+
+    # Handle both numpy arrays and lists
+    if hasattr(embedding_result, 'tolist'):
+        embeddings: List[List[float]] = embedding_result.tolist()
+    else:
+        embeddings: List[List[float]] = [list(e) if hasattr(
+            e, '__iter__') else [e] for e in embedding_result]
 
     # ── Assemble final results ───────────────────────────────────────────────
     results: List[ProcessedImage] = [
